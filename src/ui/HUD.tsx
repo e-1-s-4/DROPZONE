@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { HudSnapshot } from "../game/types";
-import { MAP_SIZE } from "../game/config";
+import { MAP_SIZE, WEAPONS } from "../game/config";
 
 export function HUD({ hud }: { hud: HudSnapshot }) {
   const mapRef = useRef<HTMLCanvasElement>(null);
@@ -50,6 +50,27 @@ export function HUD({ hud }: { hud: HudSnapshot }) {
           }}
         >
           ✕
+        </div>
+      )}
+
+      {/* Damage direction indicator */}
+      {hud.hurtDir != null && hud.hurtFlash > 0.05 && (
+        <div
+          className="absolute left-1/2 top-1/2"
+          style={{
+            opacity: Math.min(1, hud.hurtFlash * 1.4),
+            transform: `translate(-50%, -50%) rotate(${((hud.hurtDir - hud.playerYaw) * 180) / Math.PI}deg)`,
+          }}
+        >
+          <div
+            className="h-[3px] w-24 rounded-full"
+            style={{
+              transform: "translateX(-50%) translateY(-96px)",
+              background:
+                "linear-gradient(90deg, transparent, #ff4d4d 30%, #ffb4b4 50%, #ff4d4d 70%, transparent)",
+              boxShadow: "0 0 12px rgba(255,77,77,0.8)",
+            }}
+          />
         </div>
       )}
 
@@ -213,7 +234,13 @@ function fmtTime(s: number) {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
-function drawMinimap(ctx: CanvasRenderingContext2D, w: number, h: number, hud: HudSnapshot) {
+function drawMinimap(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  hud: HudSnapshot,
+  showLoot = false,
+) {
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = "rgba(8,12,16,0.85)";
   ctx.fillRect(0, 0, w, h);
@@ -221,6 +248,15 @@ function drawMinimap(ctx: CanvasRenderingContext2D, w: number, h: number, hud: H
     x: ((x + MAP_SIZE / 2) / MAP_SIZE) * w,
     y: ((z + MAP_SIZE / 2) / MAP_SIZE) * h,
   });
+  if (showLoot) {
+    for (const l of hud.loot) {
+      const p = to(l.x, l.z);
+      ctx.fillStyle = `#${l.color.toString(16).padStart(6, "0")}`;
+      ctx.globalAlpha = 0.75;
+      ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+    }
+    ctx.globalAlpha = 1;
+  }
   ctx.strokeStyle = "rgba(46,230,197,0.85)";
   ctx.lineWidth = 2;
   const z = to(hud.zoneCx, hud.zoneCz);
@@ -268,7 +304,7 @@ export function MapOverlay({
     if (!c) return;
     const ctx = c.getContext("2d");
     if (!ctx) return;
-    drawMinimap(ctx, c.width, c.height, hud);
+    drawMinimap(ctx, c.width, c.height, hud, true);
     const pois = [
       ["Old Town", -55, -48],
       ["Ironworks", 55, -50],
@@ -324,7 +360,9 @@ export function InventoryOverlay({
               className={`p-3 border ${i === hud.activeSlot ? "border-cyan-400" : "border-white/10"} bg-black/30`}
             >
               <div className="text-[10px] tracking-widest text-white/40">SLOT {i + 1}</div>
-              <div className="font-display text-lg">{s ? s.defId.toUpperCase() : "EMPTY"}</div>
+              <div className="font-display text-lg">
+                {s ? (WEAPONS[s.defId]?.name ?? s.defId.toUpperCase()) : "EMPTY"}
+              </div>
               {s && (
                 <div className="text-xs text-white/50">
                   {s.rarity} · {s.ammo} in mag

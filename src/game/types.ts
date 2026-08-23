@@ -36,6 +36,8 @@ export type AIState =
 
 export type LootKind = "weapon" | "ammo" | "armor" | "heal" | "armorKit" | "boost";
 
+export type TriggerMode = "auto" | "semi" | "burst";
+
 export interface WeaponDef {
   id: string;
   name: string;
@@ -56,6 +58,7 @@ export interface WeaponDef {
   burstCount: number;
   burstGap: number;
   adsSlow: number;
+  trigger: TriggerMode;
   color: number;
   barrelLength: number;
   thickness: number;
@@ -145,7 +148,7 @@ export interface HudSnapshot {
   nextCz: number;
   nextR: number;
   enemies: { x: number; z: number; alive: boolean; yaw: number }[];
-  loot: { x: number; z: number; color: number }[];
+  loot: { x: number; z: number; color: number; kind: LootKind }[];
   spread: number;
   ads: boolean;
   crouched: boolean;
@@ -166,6 +169,10 @@ export interface HudSnapshot {
   survivalTime: number;
   usingItem: string | null;
   useProgress: number;
+  damageDealt: number;
+  shotsFired: number;
+  shotsHit: number;
+  hurtDir: number | null;
 }
 
 export interface SettingsData {

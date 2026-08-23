@@ -1,8 +1,9 @@
 import * as THREE from "three";
-import type { AIState, Personality, WeaponInstance } from "./types";
+import type { AIState, Personality, Rarity, WeaponInstance } from "./types";
 import {
   ARMOR_STATS,
   CALLSIGNS,
+  MAP_HALF,
   MAX_HEALTH,
   PERSONALITIES,
   PLAYER_RADIUS,
@@ -65,6 +66,8 @@ export class Enemy {
   investigate: { x: number; z: number } | null = null;
   cover: { x: number; z: number } | null = null;
   lootTarget: LootItem | null = null;
+  alert: { x: number; z: number } | null = null;
+  stuckT = 0;
   shootPulse = 0;
   footT = 0;
   speed = 0;
@@ -180,8 +183,18 @@ export class Enemy {
       return;
     }
 
+    if (this.alert) {
+      this.lastSeenX = this.alert.x;
+      this.lastSeenZ = this.alert.z;
+      this.lastSeenT = ctx.time;
+      if (this.state !== "attack" && this.state !== "travel") {
+        this.state = "search";
+        this.setPath(ctx, this.alert.x, this.alert.z);
+      }
+      this.alert = null;
+    }
+
     if (this.health < 35 && this.heals > 0 && this.state !== "attack") {
-      this.state = "heal";
       this.heals--;
       this.health = Math.min(MAX_HEALTH, this.health + 45);
       this.state = "cover";
@@ -252,7 +265,7 @@ export class Enemy {
       if (d2 > bestD) continue;
       const ang = Math.atan2(c.x - this.x, c.z - this.z);
       if (Math.abs(angleDiff(this.yaw, ang)) > fov) continue;
-      if (losBlocked(this.x, this.z, c.x, c.z, ctx.colliders, 1.4)) continue;
+      if (losBlocked(this.x, this.y + 1.45, this.z, c.x, c.y + c.height * 0.6, c.z, ctx.colliders, ctx.terrain)) continue;
       bestD = d2;
       best = c;
     }
@@ -381,9 +394,21 @@ export class Enemy {
     const nz = this.z + this.vz * dt;
     const rz = resolveCircle(this.x, nz, PLAYER_RADIUS, ctx.colliders, this.y + 0.9);
     this.z = rz.z;
-    const cl = clampToMap(this.x, this.z, 3, 98);
+    const cl = clampToMap(this.x, this.z, 3, MAP_HALF - 2);
     this.x = cl.x;
     this.z = cl.z;
+
+    // Stuck recovery — repath toward a fresh nearby point when wedged
+    if (want > 0 && this.speed < 0.6) {
+      this.stuckT += dt;
+      if (this.stuckT > 1.1) {
+        this.stuckT = 0;
+        const a = Math.random() * Math.PI * 2;
+        this.setPath(ctx, this.x + Math.sin(a) * 9, this.z + Math.cos(a) * 9);
+      }
+    } else {
+      this.stuckT = 0;
+    }
   }
 
   private consumeLoot(it: LootItem, ctx: AIContext) {
@@ -408,7 +433,7 @@ export class Enemy {
     if (this.state !== "attack" || this.reloading || this.fireCd > 0) return;
     const t = ctx.combatants.find((c) => c.id === this.targetId && c.alive);
     if (!t) return;
-    if (losBlocked(this.x, this.z, t.x, t.z, ctx.colliders, 1.4)) return;
+    if (losBlocked(this.x, this.y + 1.45, this.z, t.x, t.y + t.height * 0.6, t.z, ctx.colliders, ctx.terrain)) return;
     const def = this.def;
     if (this.weapon.ammo <= 0) {
       if (this.reserve > 0) {
@@ -427,7 +452,7 @@ export class Enemy {
     ctx.onShot(this, t, aim, d);
   }
 
-  takeDamage(raw: number, _head: boolean) {
+  takeDamage(raw: number, _head: boolean, fromX?: number, fromZ?: number) {
     if (!this.alive || this.invuln > 0) return 0;
     let dmg = raw;
     const absorb = ARMOR_STATS[this.armorLevel]?.absorb ?? 0;
@@ -438,8 +463,8 @@ export class Enemy {
       dmg -= fromArmor;
     }
     this.health -= dmg;
-    this.lastSeenT = 0;
-    this.state = "attack";
+    if (fromX != null && fromZ != null) this.alert = { x: fromX, z: fromZ };
+    else if (this.state !== "attack") this.state = "search";
     if (this.health <= 0) {
       this.health = 0;
       this.alive = false;
@@ -456,6 +481,7 @@ function dpsOf(w: WeaponInstance) {
 export interface AIContext {
   time: number;
   colliders: AABB[];
+  terrain: AABB[];
   nav: NavGrid;
   loot: LootSystem;
   zone: ZoneManager;
@@ -478,6 +504,16 @@ export function spawnEnemies(
   const used = new Set<number>();
   const out: Enemy[] = [];
   const names = CALLSIGNS.slice().sort(() => rng() - 0.5);
+  const mkEnemy = (x: number, z: number, n: number) => {
+    const pers = personalities[n % personalities.length];
+    const wId = weapons[(n * 3 + ((rng() * 3) | 0)) % weapons.length];
+    const rarity: Rarity = rng() < 0.15 ? "refined" : "standard";
+    const inst: WeaponInstance = { defId: wId, ammo: magFor(WEAPONS[wId], rarity), rarity };
+    const e = new Enemy(n + 2, names[n % names.length], pers, x, z, inst);
+    e.yaw = rng() * Math.PI * 2;
+    out.push(e);
+  };
+
   let n = 0;
   const sorted = spawns
     .map((s, i) => ({ s, i, d: dist2(s.x, s.z, playerX, playerZ) }))
@@ -487,18 +523,18 @@ export function spawnEnemies(
     if (sp.d < 28 * 28) continue;
     if (used.has(sp.i)) continue;
     used.add(sp.i);
-    const pers = personalities[n % personalities.length];
-    const wId = weapons[(n * 3 + (rng() * 3) | 0) % weapons.length];
-    const rarity = rng() < 0.15 ? "refined" : "standard";
-    const inst: WeaponInstance = {
-      defId: wId,
-      ammo: magFor(WEAPONS[wId], rarity as "standard"),
-      rarity: rarity as "standard" | "refined",
-    };
-    const e = new Enemy(n + 2, names[n % names.length], pers, sp.s.x, sp.s.z, inst);
-    e.yaw = rng() * Math.PI * 2;
-    out.push(e);
-    n++;
+    mkEnemy(sp.s.x, sp.s.z, n++);
+  }
+
+  // Fallback ring spawns guarantee a full lobby even after drop-point filtering
+  let guard = 0;
+  while (out.length < count && guard++ < 300) {
+    const ang = rng() * Math.PI * 2;
+    const rad = 58 + rng() * 32;
+    const x = Math.max(-MAP_HALF + 6, Math.min(MAP_HALF - 6, Math.cos(ang) * rad));
+    const z = Math.max(-MAP_HALF + 6, Math.min(MAP_HALF - 6, Math.sin(ang) * rad));
+    if (dist2(x, z, playerX, playerZ) < 40 * 40) continue;
+    mkEnemy(x, z, n++);
   }
   return out;
 }

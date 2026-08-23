@@ -100,13 +100,19 @@ export function rayAabb2d(
   return tmin >= 0 ? tmin : tmax >= 0 ? 0 : -1;
 }
 
+/**
+ * Segment-of-sight test between two eye points. Blocked by solid colliders
+ * and (optionally) terrain masses such as the central hill.
+ */
 export function losBlocked(
   ax: number,
+  ay: number,
   az: number,
   bx: number,
+  by: number,
   bz: number,
   colliders: AABB[],
-  eyeY = 1.4,
+  terrain: AABB[] = [],
 ): boolean {
   const dx = bx - ax;
   const dz = bz - az;
@@ -115,11 +121,18 @@ export function losBlocked(
   const inv = 1 / len;
   const rx = dx * inv;
   const rz = dz * inv;
-  for (let i = 0; i < colliders.length; i++) {
-    const c = colliders[i];
-    if (c.maxY < eyeY - 0.4) continue;
+  const test = (c: AABB) => {
     const t = rayAabb2d(ax, az, rx, rz, c, len);
-    if (t > 0.35 && t < len - 0.35) return true;
+    if (t <= 0.35 || t >= len - 0.35) return false;
+    const k = t / len;
+    const y = ay + (by - ay) * k;
+    return y > c.minY - 0.2 && y < c.maxY + 0.2;
+  };
+  for (let i = 0; i < colliders.length; i++) {
+    if (test(colliders[i])) return true;
+  }
+  for (let i = 0; i < terrain.length; i++) {
+    if (test(terrain[i])) return true;
   }
   return false;
 }

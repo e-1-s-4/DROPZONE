@@ -37,6 +37,7 @@ export class Effects {
     opacity: 0.85,
   });
   private canvasCache = new Map<string, THREE.CanvasTexture>();
+  private canvasCacheMax = 48;
 
   constructor() {
     this.flash = new THREE.PointLight(0xffcc88, 0, 8);
@@ -98,6 +99,14 @@ export class Effects {
     const key = text + color;
     let tex = this.canvasCache.get(key);
     if (!tex) {
+      // Evict the oldest entry when the cache grows too large
+      if (this.canvasCache.size >= this.canvasCacheMax) {
+        const oldest = this.canvasCache.keys().next().value as string | undefined;
+        if (oldest != null) {
+          this.canvasCache.get(oldest)?.dispose();
+          this.canvasCache.delete(oldest);
+        }
+      }
       const c = document.createElement("canvas");
       c.width = 128;
       c.height = 64;

@@ -15,10 +15,10 @@ export class NavGrid {
     this.walk.fill(1);
     for (const c of colliders) {
       if (c.maxY - c.minY < 0.6) continue;
-      const x0 = this.clampI(Math.floor((c.minX - this.origin) / CELL) - 1);
-      const x1 = this.clampI(Math.floor((c.maxX - this.origin) / CELL) + 1);
-      const z0 = this.clampI(Math.floor((c.minZ - this.origin) / CELL) - 1);
-      const z1 = this.clampI(Math.floor((c.maxZ - this.origin) / CELL) + 1);
+      const x0 = this.clampI(Math.floor((c.minX - this.origin) / CELL));
+      const x1 = this.clampI(Math.floor((c.maxX - this.origin) / CELL));
+      const z0 = this.clampI(Math.floor((c.minZ - this.origin) / CELL));
+      const z1 = this.clampI(Math.floor((c.maxZ - this.origin) / CELL));
       for (let z = z0; z <= z1; z++) {
         for (let x = x0; x <= x1; x++) {
           this.walk[z * DIM + x] = 0;

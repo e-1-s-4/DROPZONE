@@ -1,4 +1,4 @@
-import type { Personality, Rarity, WeaponDef } from "./types";
+import type { Personality, Rarity, WeaponClass, WeaponDef } from "./types";
 
 export const MAP_SIZE = 200;
 export const MAP_HALF = MAP_SIZE / 2;
@@ -15,6 +15,25 @@ export const MAX_HEALTH = 100;
 export const STAMINA_MAX = 100;
 export const TOTAL_AI = 17;
 export const INTERACT_RANGE = 2.35;
+
+export const CLASS_ADS_ZOOM: Record<WeaponClass, number> = {
+  ar: 12,
+  smg: 10,
+  shotgun: 10,
+  sniper: 26,
+  burst: 12,
+  pistol: 8,
+  lmg: 14,
+};
+
+/** Guaranteed high-value spawns at landmarks. */
+export const HOT_DROPS: { x: number; z: number; id: string; rarity: Rarity }[] = [
+  { x: 55, z: -50, id: "bulwark", rarity: "superior" },
+  { x: -55, z: -48, id: "hornet", rarity: "apex" },
+  { x: 58, z: 52, id: "vanguard", rarity: "superior" },
+  { x: -18, z: 74, id: "longwatch", rarity: "apex" },
+  { x: 10, z: 10, id: "triad", rarity: "refined" },
+];
 
 export const RARITY_COLOR: Record<Rarity, number> = {
   standard: 0xb0b8c1,
@@ -65,6 +84,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     burstCount: 1,
     burstGap: 0,
     adsSlow: 0.78,
+    trigger: "auto",
     color: 0x6b7280,
     barrelLength: 1.15,
     thickness: 0.07,
@@ -89,6 +109,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     burstCount: 1,
     burstGap: 0,
     adsSlow: 0.9,
+    trigger: "auto",
     color: 0x64748b,
     barrelLength: 0.72,
     thickness: 0.065,
@@ -113,6 +134,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     burstCount: 1,
     burstGap: 0,
     adsSlow: 0.8,
+    trigger: "semi",
     color: 0x57534e,
     barrelLength: 0.82,
     thickness: 0.1,
@@ -137,6 +159,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     burstCount: 1,
     burstGap: 0,
     adsSlow: 0.55,
+    trigger: "semi",
     color: 0x44403c,
     barrelLength: 1.7,
     thickness: 0.06,
@@ -161,6 +184,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     burstCount: 3,
     burstGap: 0.055,
     adsSlow: 0.76,
+    trigger: "burst",
     color: 0x52525b,
     barrelLength: 1.2,
     thickness: 0.07,
@@ -185,6 +209,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     burstCount: 1,
     burstGap: 0,
     adsSlow: 0.92,
+    trigger: "semi",
     color: 0x71717a,
     barrelLength: 0.42,
     thickness: 0.055,
@@ -209,6 +234,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     burstCount: 1,
     burstGap: 0,
     adsSlow: 0.62,
+    trigger: "auto",
     color: 0x3f3f46,
     barrelLength: 1.28,
     thickness: 0.09,

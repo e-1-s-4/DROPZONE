@@ -3,6 +3,7 @@ import {
   ADS_SPEED_MULT,
   ARMOR_STATS,
   CROUCH_HEIGHT,
+  MAP_HALF,
   CROUCH_SPEED,
   GRAVITY,
   JUMP_SPEED,
@@ -218,7 +219,7 @@ export class Player {
     const nz = this.z + this.vz * dt;
     const resolvedZ = resolveCircle(this.x, nz, PLAYER_RADIUS, colliders, this.y + 0.9);
     this.z = resolvedZ.z;
-    const clamped = clampToMap(this.x, this.z, 3, 98);
+    const clamped = clampToMap(this.x, this.z, 3, MAP_HALF - 2);
     this.x = clamped.x;
     this.z = clamped.z;
 

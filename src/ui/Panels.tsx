@@ -1,5 +1,6 @@
 import type { HudSnapshot, SettingsData } from "../game/types";
 import { MAP_SIZE } from "../game/config";
+import type { RecordsData } from "../game/SettingsManager";
 
 export function PauseMenu({
   onResume,
@@ -31,14 +32,17 @@ export function PauseMenu({
 export function Results({
   victory,
   hud,
+  records,
   onRestart,
   onMenu,
 }: {
   victory: boolean;
   hud: HudSnapshot;
+  records?: RecordsData | null;
   onRestart: () => void;
   onMenu: () => void;
 }) {
+  const acc = hud.shotsFired > 0 ? Math.round((hud.shotsHit / hud.shotsFired) * 100) : 0;
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center no-select bg-black/70">
       <div className="hud-panel p-10 w-[420px] max-w-[92vw] text-center space-y-5">
@@ -53,6 +57,11 @@ export function Results({
           <Stat label="PLACE" value={`#${hud.placement}`} />
           <Stat label="KILLS" value={`${hud.kills}`} />
           <Stat label="TIME" value={fmt(hud.survivalTime)} />
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <Stat label="DAMAGE" value={`${hud.damageDealt}`} />
+          <Stat label="ACCURACY" value={`${acc}%`} />
+          <Stat label="CAREER WINS" value={`${records?.wins ?? 0}`} />
         </div>
         <p className="text-white/60 text-sm">
           {victory
@@ -248,8 +257,11 @@ export function LoadingScreen({ tip }: { tip: string }) {
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 no-select">
       <div className="text-center space-y-6">
         <div className="font-display tracking-[0.5em] text-cyan-300 text-xl">DEPLOYING</div>
-        <div className="w-64 h-1 bar-track mx-auto">
-          <div className="h-full bg-cyan-400 animate-pulse" style={{ width: "70%" }} />
+        <div className="w-64 h-1 bar-track mx-auto relative overflow-hidden">
+          <div
+            className="h-full bg-cyan-400 w-1/4"
+            style={{ animation: "load-slide 1.1s ease-in-out infinite" }}
+          />
         </div>
         <p className="text-white/60 text-sm max-w-md px-6">{tip}</p>
       </div>

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Game } from "./game/Game";
 import type { GameState, HudSnapshot, SettingsData } from "./game/types";
 import { DEFAULT_SETTINGS } from "./game/types";
+import type { RecordsData } from "./game/SettingsManager";
 import { Menu } from "./ui/Menu";
 import { HUD, InventoryOverlay, MapOverlay } from "./ui/HUD";
 import { DropSelect, LoadingScreen, PauseMenu, Results, SettingsPanel } from "./ui/Panels";
@@ -17,6 +18,7 @@ export default function App() {
   const [settings, setSettings] = useState<SettingsData>({ ...DEFAULT_SETTINGS });
   const [inv, setInv] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
+  const [records, setRecords] = useState<RecordsData | null>(null);
   const [tip] = useState(() => TIPS[Math.floor(Math.random() * TIPS.length)]);
 
   useEffect(() => {
@@ -28,19 +30,43 @@ export default function App() {
         setState(s.state);
       },
       onState: (s) => setState(s),
+      onCloseUi: () => {
+        setInv(false);
+        setMapOpen(false);
+      },
     });
     gameRef.current = game;
     setSettings({ ...game.settings.data });
+    setRecords({ ...game.records.data });
     return () => {
       game.dispose();
       gameRef.current = null;
     };
   }, []);
 
+  // Keep the game's input freeze in sync with React overlays
+  useEffect(() => {
+    const g = gameRef.current;
+    if (!g) return;
+    g.setUiOpen(inv || mapOpen);
+  }, [inv, mapOpen]);
+
   useEffect(() => {
     if (state !== "loading") return;
     const t = window.setTimeout(() => gameRef.current?.openDrop(), 1400);
     return () => clearTimeout(t);
+  }, [state]);
+
+  useEffect(() => {
+    if (state === "menu" || state === "dead" || state === "victory") {
+      const g = gameRef.current;
+      if (g) setRecords({ ...g.records.data });
+    }
+    if (state !== "playing") {
+      // Never carry an open overlay out of gameplay
+      setInv(false);
+      setMapOpen(false);
+    }
   }, [state]);
 
   useEffect(() => {
@@ -79,6 +105,7 @@ export default function App() {
           setPanel={setMenuPanel}
           onPlay={play}
           onSettings={() => setSettingsOpen(true)}
+          records={records}
         />
       )}
 
@@ -128,6 +155,7 @@ export default function App() {
         <Results
           victory={state === "victory"}
           hud={hud}
+          records={records}
           onRestart={() => gameRef.current?.startLoading()}
           onMenu={() => gameRef.current?.toMenu()}
         />

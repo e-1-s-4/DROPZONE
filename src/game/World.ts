@@ -10,12 +10,15 @@ export interface CoverPoint {
 export interface LootSpot {
   x: number;
   z: number;
+  y: number;
   indoor: boolean;
 }
 
 export interface WorldData {
   group: THREE.Group;
   colliders: AABB[];
+  /** Full-height terrain masses (the hill) that block shots and sight but can be walked on. */
+  terrain: AABB[];
   cover: CoverPoint[];
   lootSpots: LootSpot[];
   spawns: { x: number; z: number }[];
@@ -27,12 +30,24 @@ function aabb(x: number, z: number, w: number, d: number, y0 = 0, y1 = 4): AABB 
   return { minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2, minY: y0, maxY: y1 };
 }
 
+/** Plateau height — keep in sync with groundY(). */
+const HILL_TOP = 4.8;
+
 export function buildWorld(quality: "low" | "medium" | "high"): WorldData {
   const group = new THREE.Group();
   const colliders: AABB[] = [];
+  const terrainBoxes: AABB[] = [];
   const cover: CoverPoint[] = [];
   const lootSpots: LootSpot[] = [];
   const spawns: { x: number; z: number }[] = [];
+
+  const groundY = (x: number, z: number) => {
+    // Hill plateau
+    if (x > -28 && x < 4 && z > 58 && z < 86) return HILL_TOP;
+    if (x > -19 && x < -5 && z > 51 && z < 61) return 2.4;
+    if (x > -17 && x < -7 && z > 44 && z < 52) return 1.0;
+    return 0;
+  };
 
   const wallMat = (color: number, rough = 0.86) =>
     new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0.08 });
@@ -95,12 +110,22 @@ export function buildWorld(quality: "low" | "medium" | "high"): WorldData {
   addMesh(plane, mats.asphalt, -52, 0.03, -48, 8, 1, 40, 0, false);
   addMesh(plane, mats.asphalt, 52, 0.03, 48, 8, 1, 40, 0, false);
 
-  // Hill
-  addMesh(new THREE.BoxGeometry(1, 1, 1), mats.rock, -12, 2.4, 72, 32, 4.8, 28);
-  addMesh(new THREE.BoxGeometry(1, 1, 1), mats.rock, -12, 1.2, 56, 14, 2.4, 10);
-  addMesh(new THREE.BoxGeometry(1, 1, 1), mats.rock, -12, 0.5, 48, 10, 1, 8);
-
+  // Hill — visual mass plus terrain blockers so it stops bullets and sight
   const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+  const addTerrainBox = (x: number, y: number, z: number, w: number, h: number, d: number) => {
+    addMesh(boxGeo, mats.rock, x, y, z, w, h, d);
+    terrainBoxes.push({
+      minX: x - w / 2,
+      maxX: x + w / 2,
+      minZ: z - d / 2,
+      maxZ: z + d / 2,
+      minY: y - h / 2,
+      maxY: y + h / 2,
+    });
+  };
+  addTerrainBox(-12, 2.4, 72, 32, HILL_TOP, 28);
+  addTerrainBox(-12, 1.2, 56, 14, 2.4, 10);
+  addTerrainBox(-12, 0.5, 48, 10, 1.0, 8);
 
   const addColliderMesh = (
     x: number,
@@ -123,6 +148,10 @@ export function buildWorld(quality: "low" | "medium" | "high"): WorldData {
     });
   };
 
+  const addLoot = (x: number, z: number, indoor: boolean) => {
+    lootSpots.push({ x, z, y: groundY(x, z), indoor });
+  };
+
   const addBuilding = (
     x: number,
     z: number,
@@ -133,13 +162,14 @@ export function buildWorld(quality: "low" | "medium" | "high"): WorldData {
     roof: THREE.Material,
     door: "n" | "s" | "e" | "w",
     windows = true,
+    baseY = 0,
   ) => {
     const t = 0.45;
-    const doorW = 1.7;
+    const doorW = 2.3; // wider than a nav cell so AI can path through doors
     // Floor
-    addMesh(boxGeo, mats.dark, x, 0.04, z, w - 0.2, 0.08, d - 0.2, 0, false);
+    addMesh(boxGeo, mats.dark, x, baseY + 0.04, z, w - 0.2, 0.08, d - 0.2, 0, false);
     // Roof
-    addMesh(boxGeo, roof, x, h + 0.15, z, w + 0.4, 0.3, d + 0.4);
+    addMesh(boxGeo, roof, x, baseY + h + 0.15, z, w + 0.4, 0.3, d + 0.4);
 
     const walls: { x: number; z: number; w: number; d: number }[] = [];
     // North (+z)
@@ -172,17 +202,17 @@ export function buildWorld(quality: "low" | "medium" | "high"): WorldData {
     } else walls.push({ x: x - w / 2, z, w: t, d });
 
     for (const wl of walls) {
-      addColliderMesh(wl.x, h / 2, wl.z, wl.w, h, wl.d, wall);
+      addColliderMesh(wl.x, baseY + h / 2, wl.z, wl.w, h, wl.d, wall);
     }
 
     if (windows && quality !== "low") {
-      const wy = h * 0.55;
+      const wy = baseY + h * 0.55;
       if (door !== "n") addMesh(boxGeo, mats.window, x, wy, z + d / 2 + 0.02, 0.8, 0.55, 0.08, 0, false);
       if (door !== "s") addMesh(boxGeo, mats.window, x, wy, z - d / 2 - 0.02, 0.8, 0.55, 0.08, 0, false);
     }
 
-    lootSpots.push({ x, z, indoor: true });
-    lootSpots.push({ x: x + w * 0.22, z: z - d * 0.18, indoor: true });
+    addLoot(x, z, true);
+    addLoot(x + w * 0.22, z - d * 0.18, true);
     cover.push({ x: x + w / 2 + 1.2, z: z + d / 2 + 0.4 });
     cover.push({ x: x - w / 2 - 1.2, z: z - d / 2 - 0.4 });
   };
@@ -236,7 +266,7 @@ export function buildWorld(quality: "low" | "medium" | "high"): WorldData {
     const cx = 56 + (i % 5) * 5.4;
     const cz = 32 + Math.floor(i / 5) * 6.2;
     addProp(cx, cz, 4.4, 2.4, 2.2, wallMat(contColors[i % 4], 0.5));
-    lootSpots.push({ x: cx, z: cz + 2.2, indoor: false });
+    addLoot(cx, cz + 2.2, false);
   }
 
   // ---- PINE HOLLOW ----
@@ -251,13 +281,14 @@ export function buildWorld(quality: "low" | "medium" | "high"): WorldData {
     const x = -88 + hash01(i * 3.1) * 55;
     const z = 28 + hash01(i * 7.7) * 58;
     if (Math.hypot(x + 70, z - 42) < 8) continue;
+    if (groundY(x, z) > 0.1) continue;
     addMesh(trunkGeo, mats.trunk, x, 0.6, z, 1, 1, 1, 0, false);
     addMesh(treeGeo, mats.pine, x, 3.1, z, 0.9 + hash01(i) * 0.5, 1, 0.9 + hash01(i + 2) * 0.4, 0, quality === "high");
     colliders.push(aabb(x, z, 1.1, 1.1, 0, 4));
     if (i % 4 === 0) cover.push({ x: x + 1.4, z: z + 1.1 });
   }
-  lootSpots.push({ x: -64, z: 50, indoor: false });
-  lootSpots.push({ x: -42, z: 66, indoor: false });
+  addLoot(-64, 50, false);
+  addLoot(-42, 66, false);
 
   // ---- THE FLATS cover ----
   for (let i = 0; i < 14; i++) {
@@ -268,16 +299,16 @@ export function buildWorld(quality: "low" | "medium" | "high"): WorldData {
   addProp(8, 6, 2.8, 1.3, 1.4, mats.crate);
   addProp(18, 16, 1.6, 1.1, 3.2, mats.dark);
   addProp(-6, 18, 2.2, 1.4, 2.2, mats.rock);
-  lootSpots.push({ x: 6, z: 8, indoor: false });
-  lootSpots.push({ x: 20, z: 4, indoor: false });
-  lootSpots.push({ x: -4, z: 12, indoor: false });
+  addLoot(6, 8, false);
+  addLoot(20, 4, false);
+  addLoot(-4, 12, false);
 
-  // ---- OVERLOOK tower ----
-  addBuilding(-18, 74, 8, 8, 5, mats.warehouse, mats.metal, "s");
-  addColliderMesh(-18, 8, 74, 2.2, 6, 2.2, mats.dark);
+  // ---- OVERLOOK tower ---- (elevated: sits on the hill plateau)
+  addBuilding(-18, 74, 8, 8, 5, mats.warehouse, mats.metal, "s", false, HILL_TOP);
+  addColliderMesh(-18, 8.02, 74, 2.2, 6.45, 2.2, mats.dark);
   addMesh(boxGeo, mats.metal, -18, 11.4, 74, 5, 0.3, 5);
-  lootSpots.push({ x: -18, z: 70, indoor: false });
-  lootSpots.push({ x: -8, z: 68, indoor: false });
+  addLoot(-18, 70, false);
+  addLoot(-8, 68, false);
 
   // ---- CROSSROADS shops ----
   addBuilding(-14, -16, 10, 8, 4, mats.town, mats.roof, "n");
@@ -297,7 +328,7 @@ export function buildWorld(quality: "low" | "medium" | "high"): WorldData {
     const z = -90 + hash01(i * 13.7) * 180;
     if (Math.abs(x) < 6 && Math.abs(z) < 6) continue;
     addProp(x, z, 0.9, 1.05, 0.9, i % 2 ? mats.crate : mats.rust);
-    if (i % 3 === 0) lootSpots.push({ x: x + 1.5, z, indoor: false });
+    if (i % 3 === 0) addLoot(x + 1.5, z, false);
   }
 
   // Map boundary walls (invisible-ish dark)
@@ -326,25 +357,17 @@ export function buildWorld(quality: "low" | "medium" | "high"): WorldData {
     { name: "Crossroads", x: 0, z: -16 },
   ];
 
-  extraLootAroundPois(pois, lootSpots);
+  extraLootAroundPois(pois, addLoot);
 
-  const groundY = (x: number, z: number) => {
-    // Hill plateau
-    if (x > -28 && x < 4 && z > 58 && z < 86) return 4.8;
-    if (x > -19 && x < -5 && z > 51 && z < 61) return 2.4;
-    if (x > -17 && x < -7 && z > 44 && z < 52) return 1.0;
-    return 0;
-  };
-
-  return { group, colliders, cover, lootSpots, spawns, pois, groundY };
+  return { group, colliders, terrain: terrainBoxes, cover, lootSpots, spawns, pois, groundY };
 }
 
 function extraLootAroundPois(
   pois: { x: number; z: number }[],
-  lootSpots: LootSpot[],
+  addLoot: (x: number, z: number, indoor: boolean) => void,
 ) {
   for (const p of pois) {
-    lootSpots.push({ x: p.x + 4, z: p.z + 3, indoor: false });
-    lootSpots.push({ x: p.x - 3, z: p.z + 2, indoor: false });
+    addLoot(p.x + 4, p.z + 3, false);
+    addLoot(p.x - 3, p.z + 2, false);
   }
 }

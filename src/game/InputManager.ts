@@ -39,7 +39,13 @@ export class InputManager {
   }
 
   requestLock() {
-    this.canvas?.requestPointerLock();
+    if (!this.canvas) return;
+    try {
+      const p = this.canvas.requestPointerLock() as unknown;
+      if (p instanceof Promise) p.catch(() => {});
+    } catch {
+      /* lock refused (cooldown or unsupported) — click-to-relock recovers */
+    }
   }
 
   unlock() {

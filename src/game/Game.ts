@@ -1,9 +1,13 @@
 import * as THREE from "three";
-import type { GameState, HudSnapshot, KillFeedItem, Notification, SettingsData } from "./types";
+import type { GameState, HudSnapshot, KillFeedItem, LootKind, Notification, SettingsData } from "./types";
 import {
   ARMOR_STATS,
+  CLASS_ADS_ZOOM,
+  HOT_DROPS,
   INTERACT_RANGE,
   MAX_HEALTH,
+  PLAYER_RADIUS,
+  RARITY_COLOR,
   TOTAL_AI,
   WEAPONS,
   dmgFor,
@@ -12,18 +16,22 @@ import {
 import { InputManager } from "./InputManager";
 import { AudioManager } from "./AudioManager";
 import { SettingsManager } from "./SettingsManager";
-import { rayAabb2d } from "./Collision";
+import { rayAabb2d, resolveCircle } from "./Collision";
 import { NavGrid } from "./NavGrid";
 import { buildWorld, type WorldData } from "./World";
 import { Player } from "./Player";
 import { Enemy, spawnEnemies, type Combatant } from "./Enemies";
+import type { LootItem } from "./LootSystem";
 import { LootSystem } from "./LootSystem";
 import { ZoneManager } from "./ZoneManager";
 import { Effects } from "./Effects";
+import { RecordsManager } from "./SettingsManager";
 
 export type GameCallbacks = {
   onHud: (s: HudSnapshot) => void;
   onState: (s: GameState) => void;
+  /** Fired when the player presses Esc while a UI overlay (map/inventory) is open. */
+  onCloseUi?: () => void;
 };
 
 export class Game {
@@ -51,6 +59,11 @@ export class Game {
   notes: Notification[] = [];
   feed: KillFeedItem[] = [];
   noteId = 1;
+  records = new RecordsManager();
+  damageDealt = 0;
+  shotsFired = 0;
+  shotsHit = 0;
+  uiOpen = false;
   hears: { x: number; z: number; radius: number; sourceId: number; t: number }[] = [];
   shake = 0;
   camDist = 6.2;
@@ -159,13 +172,23 @@ export class Game {
 
   beginMatch(x: number, z: number) {
     this.clearMatch();
+    this.uiOpen = false;
     this.seed = (Date.now() % 99991) + 1;
     this.matchTime = 0;
     this.survival = 0;
+    this.damageDealt = 0;
+    this.shotsFired = 0;
+    this.shotsHit = 0;
+    this._hurtDir = 0;
     this.player = new Player();
     this.scene.add(this.player.mesh);
-    this.player.spawn(x, z, Math.random() * Math.PI * 2);
+    // Nudge the drop point out of geometry and face the map center
+    const safe = this.nav.nearestWalkable(x, z);
+    const spot = resolveCircle(safe.x, safe.z, PLAYER_RADIUS, this.world.colliders, 1.0);
+    this.player.spawn(spot.x, spot.z, Math.atan2(-spot.x, -spot.z));
+    this.loot.groundY = this.world.groundY;
     this.loot.spawnAll(this.world.lootSpots, () => this.rng());
+    for (const h of HOT_DROPS) this.loot.spawnWeapon(h.x, h.z, () => this.rng(), h.id, h.rarity);
     this.zone.reset(() => this.rng());
     this.enemies = spawnEnemies(this.world.spawns, x, z, TOTAL_AI, () => this.rng());
     for (const e of this.enemies) this.scene.add(e.mesh);
@@ -207,8 +230,20 @@ export class Game {
     }
   }
 
+  /** Freeze/release player control while React overlays (map/inventory) are open. */
+  setUiOpen(v: boolean) {
+    if (this.uiOpen === v) return;
+    this.uiOpen = v;
+    if (v) {
+      this.input.unlock();
+    } else if (this.state === "playing") {
+      this.input.requestLock();
+    }
+  }
+
   toMenu() {
     this.clearMatch();
+    this.uiOpen = false;
     this.player = new Player();
     this.scene.add(this.player.mesh);
     this.player.mesh.visible = false;
@@ -236,8 +271,14 @@ export class Game {
     }
 
     if (this.input.consume("F3") || this.input.consume("Backquote")) this.debug = !this.debug;
-    if (this.state === "playing" && this.input.consume("Escape")) this.togglePause();
-    if (this.state === "playing") this.input.consume("KeyM");
+    if (this.state === "playing") {
+      if (this.uiOpen) {
+        // Esc closes an open overlay (Tab/M toggling is owned by the React layer)
+        if (this.input.consume("Escape")) this.cb.onCloseUi?.();
+      } else if (this.input.consume("Escape")) {
+        this.togglePause();
+      }
+    }
 
     if (this.state === "menu" || this.state === "loading" || this.state === "drop") {
       this.updateCinematic(dt);
@@ -246,7 +287,7 @@ export class Game {
     } else if (this.state === "paused") {
       this.updateCamera(dt);
     } else {
-      this.updateCamera(dt);
+      this.updateOrbitCam(dt);
     }
 
     this.fx.update(dt);
@@ -273,14 +314,14 @@ export class Game {
     this.matchTime += dt;
     this.survival += dt;
     this.player.mesh.visible = true;
-    if (!this.input.locked && this.input.consumeClick()) this.input.requestLock();
+    if (!this.uiOpen && !this.input.locked && this.input.consumeClick()) this.input.requestLock();
     this.player.update(
       dt,
       this.input,
       this.world.colliders,
       this.world.groundY,
       this.settings.data.sensitivity,
-      true,
+      !this.uiOpen,
     );
 
     if (this.player.speed > 2.5) {
@@ -313,6 +354,7 @@ export class Game {
     const ctxBase = {
       time: this.time,
       colliders: this.world.colliders,
+      terrain: this.world.terrain,
       nav: this.nav,
       loot: this.loot,
       zone: this.zone,
@@ -332,25 +374,32 @@ export class Game {
       if (!e.alive && !e.mesh.userData.counted) this.onEnemyDown(e, "Storm");
     }
 
-    this.updateCamera(dt, false);
+    this.updateCamera(dt);
     this.checkEnd();
   }
 
   private handleCombat(_dt: number) {
+    if (this.uiOpen || !this.player.alive) return;
+    const def = this.player.def;
     const wantFire = this.input.mouseDown;
-    if (wantFire && this.player.alive) {
-      const def = this.player.def;
-      const fired = this.player.tryFire();
-      if (fired) {
-        this.audio.shot(def.class);
-        this.shake = Math.min(0.35, this.shake + def.recoil * 0.08);
-        const muz = this.player.muzzleWorld();
-        this.fx.muzzle(muz.x, muz.y, muz.z);
-        this.hears.push({ x: this.player.x, z: this.player.z, radius: 48, sourceId: 1, t: this.time });
-        const pellets = def.pellets;
-        for (let i = 0; i < pellets; i++) this.playerHitscan();
-        if (this.player.weapon && this.player.weapon.ammo === 0) this.player.startReload();
-      }
+    // Auto weapons fire while held; semi/burst need a fresh click per shot/burst.
+    // An in-flight burst always completes.
+    let gate = false;
+    if (def.trigger === "burst" && this.player.burstLeft > 0 && !this.player.reloading) gate = true;
+    else if (def.trigger === "auto") gate = wantFire;
+    else if (wantFire && this.input.consumeClick()) gate = true;
+    if (gate && this.player.tryFire()) {
+      this.shotsFired++;
+      this.audio.shot(def.class);
+      this.shake = Math.min(0.35, this.shake + def.recoil * 0.08);
+      const muz = this.player.muzzleWorld();
+      this.fx.muzzle(muz.x, muz.y, muz.z);
+      this.hears.push({ x: this.player.x, z: this.player.z, radius: 48, sourceId: 1, t: this.time });
+      let anyHit = false;
+      for (let i = 0; i < def.pellets; i++) anyHit = this.playerHitscan() || anyHit;
+      this.shotsFired++;
+      if (anyHit) this.shotsHit++;
+      if (this.player.weapon && this.player.weapon.ammo === 0) this.player.startReload();
     }
     if (this.player.reloading && this.player.reloadT > this.player.def.reload - 0.04) {
       if (!this.player.mesh.userData.reloadSfx) {
@@ -362,7 +411,7 @@ export class Game {
     }
   }
 
-  private playerHitscan() {
+  private playerHitscan(): boolean {
     const def = this.player.def;
     const rarity = this.player.weapon?.rarity ?? "standard";
     const origin = this.camera.position;
@@ -386,37 +435,32 @@ export class Game {
     this.fx.tracer(muz.x, muz.y, muz.z, end.x, end.y, end.z);
     if (!hit) {
       this.fx.impact(end.x, end.y, end.z, 3);
-      return;
+      return false;
     }
     this.fx.impact(hit.x, hit.y, hit.z, hit.entity ? 8 : 4);
     if (hit.entity && !hit.entity.isPlayer) {
       const enemy = this.enemies.find((e) => e.id === hit.entity!.id);
-      if (!enemy || !enemy.alive) return;
+      if (!enemy || !enemy.alive) return false;
       const dmg = dmgFor(def, rarity) * (hit.head ? def.headshot : 1);
-      const applied = enemy.takeDamage(dmg, hit.head);
-      this.playerHitConfirm(hit.head, applied);
+      const applied = enemy.takeDamage(dmg, hit.head, this.player.x, this.player.z);
+      this.playerHitConfirm(hit.head, applied, hit.x, hit.y, hit.z);
       if (!enemy.alive) this.onEnemyDown(enemy, "You");
+      return true;
     }
+    return false;
   }
 
-  private playerHitConfirm(head: boolean, dmg: number) {
+  private playerHitConfirm(head: boolean, dmg: number, hx: number, hy: number, hz: number) {
     this.audio.hit();
     this._hitMarker = 1;
     this._headMarker = head;
-    this.fx.damageNumber(
-      this.player.x + Math.sin(this.player.yaw) * 2,
-      this.player.y + 1.8,
-      this.player.z + Math.cos(this.player.yaw) * 2,
-      `${Math.round(dmg)}${head ? " HS" : ""}`,
-      head ? "#fbbf24" : "#ffffff",
-    );
+    this.fx.damageNumber(hx, hy + 0.5, hz, `${Math.round(dmg)}${head ? " HS" : ""}`, head ? "#fbbf24" : "#ffffff");
   }
 
   _hitMarker = 0;
   _headMarker = false;
   _hurt = 0;
-  mapOpen = false;
-  invOpen = false;
+  _hurtDir = 0;
 
   private aiFire(self: Enemy, target: Combatant, aim: number, dist: number) {
     const def = self.def;
@@ -450,13 +494,14 @@ export class Game {
       const before = this.player.health;
       this.player.takeDamage(dmg, hit.head);
       this._hurt = 1;
+      this._hurtDir = Math.atan2(self.x - this.player.x, self.z - this.player.z);
       this.shake = 0.2;
       this.audio.hurt();
       if (!this.player.alive && before > 0) this.onPlayerDeath(self.name);
     } else {
       const victim = this.enemies.find((e) => e.id === hit.entity!.id);
       if (victim && victim.alive) {
-        victim.takeDamage(dmg, hit.head);
+        victim.takeDamage(dmg, hit.head, self.x, self.z);
         if (!victim.alive) {
           self.kills++;
           this.onEnemyDown(victim, self.name);
@@ -490,6 +535,19 @@ export class Game {
     }
     let ent: Combatant | null = null;
     let head = false;
+    // Terrain masses (hill) stop rounds — combatants on top still fight each other
+    for (const c of this.world.terrain) {
+      const t = rayAabb2d(ox, oz, dx, dz, c, bestT);
+      if (t > 0.2 && t < bestT) {
+        const y = oy + dy * t;
+        if (y >= c.minY - 0.2 && y <= c.maxY + 0.2) {
+          bestT = t;
+          wall = true;
+          ent = null;
+          head = false;
+        }
+      }
+    }
     const bodies = this.allCombatants();
     for (const b of bodies) {
       if (!b.alive || b.id === ignoreId) continue;
@@ -513,8 +571,7 @@ export class Game {
   }
 
   private handleInteract() {
-    if (this.input.consume("Tab")) this.invOpen = !this.invOpen;
-    if (this.input.consume("KeyM")) this.mapOpen = !this.mapOpen;
+    if (this.uiOpen) return;
     const near = this.loot.nearest(this.player.x, this.player.z, INTERACT_RANGE);
     if (near && near.kind === "ammo" && near.ammoType) {
       if (this.player.giveAmmo(near.ammoType, near.ammoCount ?? 10)) {
@@ -594,6 +651,7 @@ export class Game {
     }
     this.loot.dropWeapon(e.x, e.z, e.weapon);
     if (e.armorLevel > 0) this.loot.spawnArmor(e.x + 0.8, e.z, () => Math.random());
+    this.loot.spawnAmmo(e.x - 0.7, e.z + 0.7, () => Math.random());
   }
 
   private onPlayerDeath(killer: string) {
@@ -608,6 +666,9 @@ export class Game {
     });
     this.audio.defeat();
     this.audio.setStorm(false);
+    this.audio.stopMusic();
+    this.records.record(this.placement, this.player.kills, false);
+    this.notify(`Eliminated by ${killer}`, "#ff4d4d");
     this.setState("dead");
   }
 
@@ -618,6 +679,8 @@ export class Game {
       this.placement = 1;
       this.audio.victory();
       this.audio.setStorm(false);
+      this.audio.stopMusic();
+      this.records.record(1, this.player.kills, true);
       this.setState("victory");
     }
   }
@@ -648,7 +711,8 @@ export class Game {
     this._hitMarker = Math.max(0, this._hitMarker - dt * 4);
     this._hurt = Math.max(0, this._hurt - dt * 1.6);
     const ads = this.player.ads && this.state === "playing";
-    const targetDist = ads ? 3.4 : 6.2;
+    const sniperAds = ads && this.player.def.class === "sniper";
+    const targetDist = ads ? (sniperAds ? 2.7 : 3.4) : 6.2;
     this.camDist += (targetDist - this.camDist) * Math.min(1, dt * 8);
     const pitch = this.player.pitch;
     const yaw = this.player.yaw;
@@ -669,8 +733,30 @@ export class Game {
     }
     this.camera.position.set(cx, cy, cz);
     this.camera.lookAt(px + lookX * 8, py + lookY * 8, pz + lookZ * 8);
-    this.camera.fov = ads ? this.settings.data.fov - 12 : this.settings.data.fov;
+    const zoom = ads ? CLASS_ADS_ZOOM[this.player.def.class] ?? 12 : 0;
+    this.camera.fov = this.settings.data.fov - zoom;
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Slow orbit around the final position shown behind the results screen. */
+  private updateOrbitCam(dt: number) {
+    this.cineT += dt * 0.45;
+    this.shake = Math.max(0, this.shake - dt * 2.2);
+    this._hitMarker = Math.max(0, this._hitMarker - dt * 4);
+    this._hurt = Math.max(0, this._hurt - dt * 1.6);
+    const px = this.player.x;
+    const py = this.player.y + 1.35;
+    const pz = this.player.z;
+    this.camera.position.set(
+      px + Math.cos(this.cineT) * 7.5,
+      py + 3.1,
+      pz + Math.sin(this.cineT) * 7.5,
+    );
+    this.camera.lookAt(px, py, pz);
+    if (this.camera.fov !== this.settings.data.fov) {
+      this.camera.fov = this.settings.data.fov;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   notify(text: string, color: string) {
@@ -729,7 +815,9 @@ export class Game {
       nextCz: this.zone.nextCz,
       nextR: this.zone.nextR,
       enemies: this.enemies.map((e) => ({ x: e.x, z: e.z, alive: e.alive, yaw: e.yaw })),
-      loot: this.loot.items.filter((i) => !i.taken).map((i) => ({ x: i.x, z: i.z, color: 1 })),
+      loot: this.loot.items
+        .filter((i) => !i.taken)
+        .map((i) => ({ x: i.x, z: i.z, color: lootColor(i), kind: i.kind })),
       spread: this.player.spread,
       ads: this.player.ads,
       crouched: this.player.crouched,
@@ -760,6 +848,10 @@ export class Game {
       survivalTime: this.survival,
       usingItem: this.player.using,
       useProgress: this.player.using ? 1 - this.player.useT / this.player.useMax : 0,
+      damageDealt: Math.round(this.damageDealt),
+      shotsFired: this.shotsFired,
+      shotsHit: this.shotsHit,
+      hurtDir: this._hurt > 0.05 ? this._hurtDir : null,
     };
     this.cb.onHud(snap);
   }
@@ -780,6 +872,20 @@ export class Game {
     this.audio.dispose();
     this.renderer.dispose();
   }
+}
+
+const LOOT_COLORS: Record<LootKind, number> = {
+  weapon: 0xffffff,
+  ammo: 0xd6d3d1,
+  armor: 0x60a5fa,
+  heal: 0x4ade80,
+  armorKit: 0x38bdf8,
+  boost: 0xf472b6,
+};
+
+function lootColor(i: LootItem): number {
+  if (i.kind === "weapon" && i.weapon) return RARITY_COLOR[i.weapon.rarity];
+  return LOOT_COLORS[i.kind];
 }
 
 function rarityHex(r: string) {

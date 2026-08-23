@@ -31,6 +31,8 @@ let nextId = 1;
 export class LootSystem {
   items: LootItem[] = [];
   group = new THREE.Group();
+  /** Set by the Game each match so dropped/spawned loot sits on terrain. */
+  groundY: (x: number, z: number) => number = () => 0;
 
   spawnAll(spots: LootSpot[], rng: () => number) {
     this.clear();
@@ -67,14 +69,15 @@ export class LootSystem {
     const def = WEAPONS[id];
     const inst: WeaponInstance = { defId: id, ammo: magFor(def, r), rarity: r };
     const mesh = createLootBeacon(RARITY_COLOR[r]);
-    mesh.position.set(x, 0, z);
+    const y = this.groundY(x, z);
+    mesh.position.set(x, y, z);
     this.group.add(mesh);
     this.items.push({
       id: nextId++,
       kind: "weapon",
       x,
       z,
-      y: 0,
+      y,
       weapon: inst,
       rarity: r,
       taken: false,
@@ -87,7 +90,8 @@ export class LootSystem {
     const ammoType = types[(rng() * types.length) | 0];
     const counts: Record<AmmoType, number> = { light: 30, heavy: 24, shells: 8, precision: 6 };
     const mesh = createLootBeacon(0xd6d3d1);
-    mesh.position.set(x, 0, z);
+    const y = this.groundY(x, z);
+    mesh.position.set(x, y, z);
     mesh.scale.setScalar(0.7);
     this.group.add(mesh);
     this.items.push({
@@ -95,7 +99,7 @@ export class LootSystem {
       kind: "ammo",
       x,
       z,
-      y: 0,
+      y,
       ammoType,
       ammoCount: counts[ammoType],
       rarity: "standard",
@@ -108,14 +112,15 @@ export class LootSystem {
     const level = rng() < 0.55 ? 1 : rng() < 0.7 ? 2 : 3;
     const colors = [0x9ca3af, 0x60a5fa, 0xc4b5fd];
     const mesh = createLootBeacon(colors[level - 1]);
-    mesh.position.set(x, 0, z);
+    const y = this.groundY(x, z);
+    mesh.position.set(x, y, z);
     this.group.add(mesh);
     this.items.push({
       id: nextId++,
       kind: "armor",
       x,
       z,
-      y: 0,
+      y,
       armorLevel: level,
       rarity: level === 3 ? "apex" : level === 2 ? "superior" : "refined",
       taken: false,
@@ -126,7 +131,8 @@ export class LootSystem {
   spawnHeal(x: number, z: number, rng: () => number) {
     const kit = rng() < 0.35;
     const mesh = createLootBeacon(kit ? 0x38bdf8 : 0x4ade80);
-    mesh.position.set(x, 0, z);
+    const y = this.groundY(x, z);
+    mesh.position.set(x, y, z);
     mesh.scale.setScalar(0.75);
     this.group.add(mesh);
     this.items.push({
@@ -134,7 +140,7 @@ export class LootSystem {
       kind: kit ? "armorKit" : "heal",
       x,
       z,
-      y: 0,
+      y,
       rarity: kit ? "superior" : "refined",
       taken: false,
       mesh,
@@ -143,7 +149,8 @@ export class LootSystem {
 
   spawnBoost(x: number, z: number) {
     const mesh = createLootBeacon(0xf472b6);
-    mesh.position.set(x, 0, z);
+    const y = this.groundY(x, z);
+    mesh.position.set(x, y, z);
     mesh.scale.setScalar(0.7);
     this.group.add(mesh);
     this.items.push({
@@ -151,7 +158,7 @@ export class LootSystem {
       kind: "boost",
       x,
       z,
-      y: 0,
+      y,
       rarity: "superior",
       taken: false,
       mesh,
@@ -186,7 +193,7 @@ export class LootSystem {
   update(t: number) {
     for (const it of this.items) {
       if (it.taken) continue;
-      it.mesh.position.y = 0.15 + Math.sin(t * 2.4 + it.id) * 0.12;
+      it.mesh.position.y = it.y + 0.15 + Math.sin(t * 2.4 + it.id) * 0.12;
       it.mesh.rotation.y = t * 1.2 + it.id;
     }
   }

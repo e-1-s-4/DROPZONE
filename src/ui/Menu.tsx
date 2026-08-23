@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { RecordsData } from "../game/SettingsManager";
 
 type Panel = "root" | "how" | "controls" | "credits";
 
@@ -7,8 +8,9 @@ export function Menu(props: {
   setPanel: (p: Panel) => void;
   onPlay: () => void;
   onSettings: () => void;
+  records?: RecordsData | null;
 }) {
-  const { panel, setPanel, onPlay, onSettings } = props;
+  const { panel, setPanel, onPlay, onSettings, records } = props;
 
   return (
     <div className="absolute inset-0 z-20 overflow-hidden no-select pointer-events-none">
@@ -28,7 +30,7 @@ export function Menu(props: {
               RUSTHAVEN SECTOR
             </span>
           </div>
-          <span className="text-xs tracking-[0.3em] text-white/40 uppercase">Build 1.0 — Offline Ops</span>
+          <span className="text-xs tracking-[0.3em] text-white/40 uppercase">Build 1.1 — Offline Ops</span>
         </div>
 
         <div className="mt-16 max-w-xl">
@@ -40,6 +42,24 @@ export function Menu(props: {
             Eighteen operators. One shrinking ring. Loot the sector, outgun the rest, and be the last signal on the net.
           </p>
         </div>
+
+        {records && records.matches > 0 && (
+          <div className="mt-6 flex flex-wrap gap-x-6 gap-y-1 text-[11px] tracking-[0.25em] uppercase text-cyan-200/70 font-display">
+            <span>
+              Best placement{" "}
+              <span className="text-white">{records.bestPlacement > 90 ? "—" : `#${records.bestPlacement}`}</span>
+            </span>
+            <span>
+              Top kills <span className="text-white">{records.bestKills}</span>
+            </span>
+            <span>
+              Wins <span className="text-white">{records.wins}</span>
+            </span>
+            <span>
+              Drops <span className="text-white">{records.matches}</span>
+            </span>
+          </div>
+        )}
 
         <div className="mt-10 w-full max-w-sm space-y-3">
           {panel === "root" && (
@@ -77,6 +97,7 @@ export function Menu(props: {
               <Row k="M" v="Map" />
               <Row k="Esc" v="Pause" />
               <Row k="F3" v="Debug overlay" />
+              <Row k="Semi weapons" v="One trigger pull per shot — click to fire" />
             </InfoCard>
           )}
           {panel === "credits" && (
