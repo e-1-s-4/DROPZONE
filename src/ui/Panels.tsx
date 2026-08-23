@@ -221,7 +221,7 @@ export function DropSelect({
           <div className="absolute left-0 top-[46%] w-full h-[4%] bg-[#3a3d42]/80" />
           <div className="absolute left-[48%] top-0 h-full w-[4%] bg-[#3a3d42]/80" />
           <img
-            src="/images/drop-map.jpg"
+            src="images/drop-map.jpg"
             alt=""
             className="absolute inset-0 w-full h-full object-cover opacity-55 mix-blend-overlay"
           />

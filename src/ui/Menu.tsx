@@ -16,7 +16,7 @@ export function Menu(props: {
     <div className="absolute inset-0 z-20 overflow-hidden no-select pointer-events-none">
       <div
         className="absolute inset-0 bg-cover bg-center opacity-35 pointer-events-none"
-        style={{ backgroundImage: "url(/images/menu-bg.jpg)" }}
+          style={{ backgroundImage: "url(images/menu-bg.jpg)" }}
       />
       <div className="absolute inset-0 bg-gradient-to-r from-black/88 via-black/55 to-black/20 pointer-events-none" />
       <div className="absolute inset-0 dz-grid opacity-30 pointer-events-none" />
